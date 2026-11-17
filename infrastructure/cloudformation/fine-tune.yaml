@@ -1,0 +1,165 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Benchmark-to-Build, Module 3: an S3 bucket for Nova Micro
+  fine-tuning data and output, and the IAM role Amazon Bedrock assumes to run
+  the fine-tuning job. Deploy in us-east-1. Creates nothing that bills while idle
+  beyond S3 storage, and empties its bucket when deleted.
+
+Rules:
+  UsEast1Only:
+    Assertions:
+      - Assert: !Equals [!Ref 'AWS::Region', us-east-1]
+        AssertDescription: Deploy in us-east-1, where the sample's Nova Micro fine-tuning was run.
+
+Resources:
+
+  # The name ends in part of the stack ID, so a redeploy never collides with
+  # a leftover.
+  FineTuneBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub
+        - 'benchmark-to-build-finetune-${AWS::AccountId}-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  FineTuneBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FineTuneBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt FineTuneBucket.Arn
+              - !Sub '${FineTuneBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  BedrockTrainingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - 'BenchmarkToBuild-FineTune-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+              ArnLike:
+                'aws:SourceArn': !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:model-customization-job/*'
+      Policies:
+        - PolicyName: FineTuneData
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ListBucket
+                Effect: Allow
+                Action: 's3:ListBucket'
+                Resource: !GetAtt FineTuneBucket.Arn
+              - Sid: ReadTrainingData
+                Effect: Allow
+                Action: 's3:GetObject'
+                Resource: !Sub '${FineTuneBucket.Arn}/training/*'
+              - Sid: WriteJobOutput
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                Resource: !Sub '${FineTuneBucket.Arn}/output/*'
+
+  # Empties FineTuneBucket on delete or rollback, so the stack deletes cleanly.
+  BucketCleanupLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+
+  BucketCleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: EmptyFineTuneBucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:ListBucket'
+                  - 's3:DeleteObject'
+                Resource:
+                  - !GetAtt FineTuneBucket.Arn
+                  - !Sub '${FineTuneBucket.Arn}/*'
+
+  BucketCleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Runtime: python3.12
+      Timeout: 300
+      Role: !GetAtt BucketCleanupRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref BucketCleanupLogGroup
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      bucket = boto3.resource('s3').Bucket(event['ResourceProperties']['Bucket'])
+                      bucket.objects.all().delete()
+                      if list(bucket.objects.limit(1)):
+                          raise RuntimeError(f'{bucket.name} still holds objects')
+                      print(f'emptied {bucket.name}')
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, 'bucket-cleanup')
+              except Exception as e:
+                  print(f'FAILED: {e}')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {}, 'bucket-cleanup',
+                                   reason=str(e)[:1000])
+
+  BucketCleanup:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt BucketCleanupFunction.Arn
+      ServiceTimeout: 360
+      Bucket: !Ref FineTuneBucket
+
+Outputs:
+  FineTuneBucketName:
+    Description: Bucket for the training data (training/) and job output (output/)
+    Value: !Ref FineTuneBucket
+
+  BedrockTrainingRoleArn:
+    Description: Role Amazon Bedrock assumes to run the fine-tuning job
+    Value: !GetAtt BedrockTrainingRole.Arn

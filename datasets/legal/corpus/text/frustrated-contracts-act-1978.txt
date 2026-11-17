@@ -1,0 +1,222 @@
+SOURCE: Frustrated Contracts Act 1978 No 105 (NSW) | legislation.nsw.gov.au | in-force compilation, retrieved manually | NSW Crown copyright
+==============================================================================
+
+An Act to amend the law relating to frustrated contracts.
+
+Part 1 Preliminary
+
+1 Name of Act
+
+This Act may be cited as the Frustrated Contracts Act 1978 .
+
+2 Commencement
+
+(1) This section and section 1 shall commence on the date of assent to this Act.
+
+(2) Except as provided in subsection (1), this Act shall commence on such day as may be appointed by the Governor in respect thereof and as may be notified by proclamation published in the Gazette.
+
+3 (Repealed)
+
+s 3: Am 1980 No 62, sec 3 (a). Rep 1999 No 31, Sch 5.42.
+
+4 Act binds the Crown
+
+This Act binds the Crown, not only in right of New South Wales but also, so far as the legislative power of Parliament permits, the Crown in all its other capacities.
+
+5 Interpretation
+
+(1) In this Act, except to the extent that the context or subject-matter otherwise indicates or requires:
+agreed return , in relation to performance of a contract by a party, means such performance of the contract by another party as is contemplated by the contract as consideration for the first-mentioned performance.
+
+court , in relation to any matter, means the court or arbitrator before whom the matter falls to be determined.
+
+frustration includes avoidance of an agreement under section 12 of the Sale of Goods Act 1923 .
+
+party includes the assigns of a party.
+
+performance , in relation to a contract, means:
+
+(a) performance, wholly or in part, of a promise in the contract, or
+
+(b) fulfilment, wholly or in part, of a condition of or in the contract.
+
+(2) Where performance of a contract is referred to in a provision of this Act:
+
+(a) a reference in the provision to the performing party is a reference to the party to the contract by whom the performance was, or was intended to be, given, and
+
+(b) a reference in the provision to the other party to the contract is a reference to the party by whom performance of the contract is contemplated by the contract as consideration for the performance referred to in the provision.
+
+(3) For the purposes of this Act, performance of a contract is given and received if received as contemplated by the contract, whether received by a party to the contract or not.
+
+(4) For the purposes of this Act, where a contract has been frustrated and a thing is done or suffered under the contract after the time of frustration but before the party who does or suffers that thing knows or ought to know of the circumstances (whether matters of fact or law) giving rise to the frustration, that thing has effect as if done or suffered before the time of frustration.
+
+(5) It is the intention of Parliament that, except to the extent that the parties to a contract otherwise agree, a court other than a court of New South Wales may exercise the powers given to a court by Part 3 in relation to the contract.
+
+6 Act does not apply to certain contracts
+
+(1) This Act:
+
+(a) does not apply to a contract made before the commencement of this Act,
+
+(b) does not apply to a charter-party, except a time charter-party and except a charter-party by way of demise,
+
+(c) does not apply to a contract (other than a charter-party) for the carriage of goods by sea,
+
+(d) does not apply to a contract of insurance, and
+
+(e) does not apply to any other contract in so far as the parties thereto have agreed that this Act does not apply to the contract.
+
+(2) This Act does not apply to a contract embodied in or constituted by the memorandum or articles of association or rules or other instrument or agreement constituting, or regulating the affairs of, any of the following bodies:
+
+(a) a company within the meaning of the Corporations Act 2001 of the Commonwealth,
+
+(b) a registrable body within the meaning of the Corporations Act 2001 of the Commonwealth,
+
+(b1) a co-operative registered under the Co-operatives National Law (NSW) ,
+
+(c) a society registered under the Friendly Societies Act 1989 , the Financial Institutions (NSW) Code or the Co-operative Housing and Starr-Bowkett Societies Act 1998 ,
+
+(d) an association registered under the Associations Incorporation Act 2009 ,
+
+(e) an industrial organisation within the meaning of the Industrial Relations Act 1996 that is a State organisation incorporated under that Act,
+
+(f) a partnership within the meaning of the Partnership Act 1892 , or
+
+(g) any association which, on a proper case arising, is liable to be wound up or dissolved by order of the Supreme Court of New South Wales,
+
+in any case in which the circumstances alleged to give rise to frustration of the contract furnish a case for the winding up or dissolution of the body.
+
+(3) Where a contract is severable into parts and one or more but not all parts are frustrated, this Act does not apply to the part or parts not frustrated.
+
+s 6: Am 1980 No 62, sec 3 (b); 1986 No 16, Sch 23; 1996 No 121, Sch 4.23; 1997 No 11, Sch 1.7; 1997 No 147, Sch 2.11; 1998 No 11, Sch 6.10; 2001 No 34, Sch 2.20; 2009 No 7, Sch 3.6; 2014 No 88, Sch 2.24 [1] [2].
+
+Part 2 Effect of frustration of contract
+
+7 Promise not performed
+
+(1) Where a promise under a frustrated contract was due to be, but was not, performed before the time of frustration, the promise is discharged except to the extent necessary to support a claim for damages for breach of the promise before the time of frustration.
+
+(2) Subsection (1) does not affect a promise due for performance before frustration which would not have been discharged by the frustration if it had been due for performance after the time of frustration.
+
+8 Damages assessed after frustration
+
+Where a contract is frustrated and a liability for damages for breach of the contract has accrued before the time of frustration, regard shall be had, in assessing those damages after that time, to the fact that the contract has been frustrated.
+
+Part 3 Adjustment on frustration of contract
+
+Division 1 Adjustment where performance (excluding payment of money) received
+
+9 Definitions
+
+In this Division performance in relation to a contract does not include:
+
+(a) performance, wholly or in part, of a promise in the contract to pay money, or
+
+(b) fulfilment, wholly or in part, of a condition of or in the contract that money be paid.
+
+10 Adjustment where whole performance received
+
+Where a contract is frustrated and the whole of the performance to be given by a party under the contract has been received before the time of frustration, the performing party shall be paid by the other party to the contract an amount equal to the value of the agreed return for the performance.
+
+11 Adjustment where part performance only received
+
+(1) In this section:
+attributable cost , in relation to performance received under a frustrated contract, means:
+
+(a) where there is no incidental gain to the performing party, and except as provided by paragraph (c)—an amount equal to the reasonable cost of the performance,
+
+(b) where there is an incidental gain to the performing party, and except as provided by paragraph (c)—such part of the reasonable cost of the performance as is equal to an amount calculated by deducting from the reasonable cost of the performance the value of that incidental gain, or
+
+(c) where the amount referred to in paragraph (a) or (b) exceeds the proportionate allowance for the performance—such part of the reasonable cost of the performance as is equal in amount to that proportionate allowance.
+
+attributable value , in relation to performance received under a frustrated contract, means an amount equal to the value of the proportionate allowance for that performance reduced by the lost value of that performance.
+
+incidental gain , in relation to a party to a contract who suffers a detriment referred to in the definition of “reasonable cost”, means any property or improvement to property acquired or derived by that party as a consequence of doing or suffering the acts or things that caused that party to suffer the detriment, except to the extent that the property or improvement so acquired or derived is comprised in any performance given by that party under the contract or is expended or disposed of in giving any such performance.
+
+lost value , in relation to performance received under a frustrated contract, is a reference to the amount (if any) by which the value of that performance was reduced by reason of the frustration of the contract, that value being assessed as at the time immediately before the frustration of the contract and on the basis that the contract would not be frustrated.
+
+proportionate allowance , in relation to performance received under a frustrated contract, means such part of the value of the agreed return for complete performance of the contract by the performing party as is appropriate to be charged to the other party for the performance received, having regard to the extent to which the performance received is less than the whole of the performance contracted to be given by the performing party.
+
+reasonable cost , in relation to performance received under a frustrated contract, is an amount that would be fair compensation to the performing party for any detriment suffered by that party in reasonably paying money, doing work or doing or suffering any other act or thing to the extent to which the detriment was suffered for the purpose of giving the performance so received.
+
+(2) Where a contract is frustrated and part, but not the whole, of the performance to be given by a party under the contract has been received before the time of frustration, the performing party shall be paid by the other party to the contract:
+
+(a) an amount equal to the attributable value of the performance, except where the attributable cost of the performance exceeds its attributable value, or
+
+(b) where the attributable cost of the performance exceeds its attributable value—an amount equal to the sum of:
+
+(i) the attributable value of the performance, and
+
+(ii) one-half of the amount by which the attributable cost of the performance exceeds its attributable value.
+
+Division 2 Other adjustments
+
+12 Return of money paid
+
+Where a contract is frustrated and a party to the contract has paid money to another person (whether or not a party to the contract) as, or as part of, an agreed return for performance of the contract by another party (whether or not that other party is the person to whom the payment was made and whether or not there has been any such performance) that other party shall pay the same amount of money to the party who made the payment.
+
+13 Adjustment of certain losses and gains
+
+(1) Where a contract is frustrated and, by reasonably paying money, doing work or doing or suffering any other act or thing for the purpose of giving performance under the contract (not being performance which has been received) the performing party has suffered a detriment, the performing party shall be paid by the other party to the contract an amount equal to one-half of the amount that would be fair compensation for the detriment suffered.
+
+(2) Where a performing party referred to in subsection (1) has, as a consequence of doing or suffering the acts or things that caused that party to suffer the detriment so referred to, acquired or derived any property or improvement to property, the performing party shall pay to the other party so referred to one-half of the value of the property or improvement so acquired or derived.
+
+Division 3 Recovery of money payable
+
+14 Recovery of money as a debt
+
+A person entitled under Division 1 or 2 to be paid an amount of money by another person may recover the amount from that other person as a debt in a court of competent jurisdiction.
+
+Division 4 Adjustment by the court
+
+15 Adjustment by court
+
+(1) Where the court is satisfied that the terms of a frustrated contract or the events which have occurred are such that, in respect of the contract:
+
+(a) Divisions 1 and 2 are manifestly inadequate or inappropriate,
+
+(b) application of Divisions 1 and 2 would cause manifest injustice, or
+
+(c) application of Divisions 1 and 2 would be excessively difficult or expensive,
+
+the court may, by order, exclude the contract from the operation of Divisions 1 and 2 and, subject to subsection (8), may, by order, substitute such adjustments in money or otherwise as it considers proper.
+
+(2) Orders which the court may make under subsection (1) include:
+
+(a) orders for the payment of interest, and
+
+(b) orders as to the time when money shall be paid.
+
+(3) In addition to its jurisdiction under subsections (1) and (2), the Supreme Court or the District Court may, for the purposes of this section, make orders for:
+
+(a) the making of any disposition of property,
+
+(b) the sale or other realisation of property,
+
+(c) the disposal of the proceeds of sale or other realisation of property,
+
+(d) the creation of a charge on property in favour of any person,
+
+(e) the enforcement of a charge so created,
+
+(f) the appointment and regulation of the proceedings of a receiver of property, and
+
+(g) the vesting of property in any person.
+
+(4) Sections 78 and 79 of the Trustee Act 1925 apply to a vesting order, and to the power to make a vesting order, under subsection (3).
+
+(5) Section 78 (2) of the Trustee Act 1925 applies to a vesting order under subsection (3) as if subsection (3) were included in the provisions of Part 3 of that Act.
+
+(6) In relation to a vesting order of the District Court, sections 78 and 79 of the Trustee Act 1925 shall be read as if “Court” in those sections meant the District Court.
+
+(7) Subsections (2) to (6) do not limit the generality of subsection (1).
+
+(8) This section does not authorise the Local Court to give a judgment otherwise than for the payment of money.
+
+s 15: Am 1999 No 31, Sch 4.33; 2007 No 94, Sch 2.
+
+Part 4
+
+16–20  (Repealed)
+
+pt 4 (ss 16–20): Rep 1980 No 62, sec 3 (c).

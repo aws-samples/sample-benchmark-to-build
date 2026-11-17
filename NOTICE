@@ -1,0 +1,23 @@
+Benchmark-to-Build: Sovereign AI Evaluation and Fine-Tuning
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+**********************
+THIRD PARTY CONTENT
+**********************
+
+datasets/legal/corpus/text/ contains processed copies of Australian legislation,
+licensed under the Creative Commons Attribution 4.0 International licence
+(https://creativecommons.org/licenses/by/4.0/). The text has been changed from the
+originals: tables of contents removed and website navigation trimmed. It is not an
+authorised version of the law. Per-Act versions and sources are in
+datasets/legal/corpus/SOURCES.md.
+
+- Commonwealth Acts (9): Based on content from the Federal Register of
+  Legislation at 18 September 2026. For the latest information on Australian
+  Government legislation please go to https://www.legislation.gov.au.
+  The Commonwealth Coat of Arms is excluded from the licence and is not included.
+- NSW Acts (3): Based on content from the New South Wales Legislation website at
+  16 September 2026. For the latest information on New South Wales Government
+  legislation please go to https://www.legislation.nsw.gov.au.
+  (c) State of New South Wales. The government coat of arms is excluded from the
+  licence and is not included.

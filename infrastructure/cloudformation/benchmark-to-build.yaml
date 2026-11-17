@@ -1,0 +1,1344 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Benchmark-to-Build sample. Provisions a SageMaker Unified Studio domain and
+  project, plus the Bedrock resources the notebooks use: dataset and results buckets, an evaluation role,
+  and a Knowledge Base backed by S3 Vectors.
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: benchmark-to-build
+    Description: Name of the SageMaker Unified Studio domain.
+
+  ProjectName:
+    Type: String
+    Default: Benchmark to Build
+    Description: Name of the SageMaker Unified Studio project.
+
+  AssetsBucketName:
+    Type: String
+    Default: ''
+    Description: >
+      Optional. Bucket holding a zip of this repository, named
+      benchmark-to-build.zip, to copy the datasets from. Leave blank and upload
+      the datasets by hand instead (see the README).
+
+  AssetsBucketPrefix:
+    Type: String
+    Default: ''
+    Description: Key prefix of benchmark-to-build.zip, ending in a slash. Leave blank if AssetsBucketName is blank.
+
+  DatasetDomain:
+    Type: String
+    Default: legal
+    Description: Dataset domain. Drives the S3 prefixes the notebooks read.
+
+Conditions:
+  StageAssets: !Not [!Equals [!Ref AssetsBucketName, '']]
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # Networking: SageMaker Unified Studio needs public subnets and private
+  # subnets with egress.
+  # ---------------------------------------------------------------------------
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${DomainName}-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [2, !GetAZs '']
+      MapPublicIpOnLaunch: true
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.12.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.13.0/24
+      AvailabilityZone: !Select [2, !GetAZs '']
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet3RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet3RTA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Keeps notebook S3 traffic off the NAT gateway.
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PublicRouteTable
+        - !Ref PrivateRouteTable
+
+  # ---------------------------------------------------------------------------
+  # Buckets. Physical names end in part of the stack ID, so a retry never
+  # collides with a resource a failed rollback left behind.
+  # ---------------------------------------------------------------------------
+
+  ProjectBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub
+        - 'benchmark-to-build-project-${AWS::AccountId}-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ProjectBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ProjectBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ProjectBucket.Arn
+              - !Sub '${ProjectBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  DatasetBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub
+        - 'benchmark-to-build-datasets-${AWS::AccountId}-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  DatasetBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DatasetBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt DatasetBucket.Arn
+              - !Sub '${DatasetBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  ResultsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub
+        - 'benchmark-to-build-results-${AWS::AccountId}-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ResultsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ResultsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ResultsBucket.Arn
+              - !Sub '${ResultsBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  # ---------------------------------------------------------------------------
+  # IAM Identity Center: SMUS signs in through IDC. The identity store API
+  # cannot set a password, so you generate one after deploying (see README).
+  # ---------------------------------------------------------------------------
+
+  IDCInstance:
+    Type: AWS::SSO::Instance
+    Properties:
+      Name: !Sub 'benchmark-to-build-${AWS::AccountId}'
+
+  IDCLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: IdentityStoreUserPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - identitystore:CreateGroup
+                  - identitystore:CreateGroupMembership
+                  - identitystore:CreateUser
+                  - identitystore:GetGroupId
+                  - identitystore:GetUserId
+                Resource: '*'
+
+  # Declared so the stack deletes it; Lambda's implicit log groups outlive it.
+  IDCLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+
+  # Create-or-adopt: a retry or update reuses the existing user and group
+  # instead of failing on ConflictException.
+  IDCLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      LoggingConfig:
+        LogGroup: !Ref IDCLambdaLogGroup
+      Handler: index.handler
+      Runtime: python3.12
+      Timeout: 300
+      Description: Create the sign-in user and group in the identity store
+      Role: !GetAtt IDCLambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          IDS = boto3.client('identitystore')
+
+          USER_NAME = 'analyst'
+          GROUP_NAME = 'benchmark-to-build'
+          EMAIL = 'analyst@example.com'
+
+          def ensure_user(store):
+              try:
+                  return IDS.create_user(
+                      IdentityStoreId=store,
+                      UserName=USER_NAME,
+                      DisplayName='Benchmark Analyst',
+                      Name={'GivenName': 'Benchmark', 'FamilyName': 'Analyst'},
+                      Emails=[{'Value': EMAIL, 'Type': 'Work', 'Primary': True}],
+                  )['UserId']
+              except IDS.exceptions.ConflictException:
+                  return IDS.get_user_id(
+                      IdentityStoreId=store,
+                      AlternateIdentifier={'UniqueAttribute': {
+                          'AttributePath': 'userName', 'AttributeValue': USER_NAME}},
+                  )['UserId']
+
+          def ensure_group(store):
+              try:
+                  return IDS.create_group(
+                      IdentityStoreId=store,
+                      DisplayName=GROUP_NAME,
+                      Description='Benchmark-to-Build users',
+                  )['GroupId']
+              except IDS.exceptions.ConflictException:
+                  return IDS.get_group_id(
+                      IdentityStoreId=store,
+                      AlternateIdentifier={'UniqueAttribute': {
+                          'AttributePath': 'displayName', 'AttributeValue': GROUP_NAME}},
+                  )['GroupId']
+
+          def handler(event, context):
+              # Stable across updates, so an update cannot trigger a Delete of
+              # a "replaced" resource.
+              physical_id = event.get('PhysicalResourceId') or 'idc-users'
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, physical_id)
+                      return
+
+                  store = event['ResourceProperties']['IdentityStoreId']
+                  user_id = ensure_user(store)
+                  group_id = ensure_group(store)
+                  try:
+                      IDS.create_group_membership(
+                          IdentityStoreId=store,
+                          GroupId=group_id,
+                          MemberId={'UserId': user_id},
+                      )
+                  except IDS.exceptions.ConflictException:
+                      pass
+
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'UserId': user_id,
+                      'GroupId': group_id,
+                      'UserName': USER_NAME,
+                  }, physical_id)
+              except Exception as e:
+                  print(f'FAILED: {e}')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {},
+                                   physical_id, reason=str(e)[:1000])
+
+  IDCUsers:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt IDCLambda.Arn
+      IdentityStoreId: !GetAtt IDCInstance.IdentityStoreId
+      # Fail after the Lambda's own timeout instead of CloudFormation's hour.
+      ServiceTimeout: 360
+
+  # ---------------------------------------------------------------------------
+  # Bedrock service roles, assumed by Bedrock itself, not by the notebooks.
+  # ---------------------------------------------------------------------------
+
+  BedrockEvaluationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - 'BenchmarkToBuild-BedrockEvaluation-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      Policies:
+        - PolicyName: EvaluationJobAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadEvaluationDataset
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt DatasetBucket.Arn
+                  - !Sub '${DatasetBucket.Arn}/*'
+              - Sid: WriteEvaluationResults
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                  - 's3:PutObject'
+                  - 's3:GetBucketLocation'
+                  - 's3:AbortMultipartUpload'
+                  - 's3:ListBucketMultipartUploads'
+                Resource:
+                  - !GetAtt ResultsBucket.Arn
+                  - !Sub '${ResultsBucket.Arn}/*'
+              # Candidates are invoked through us. inference profiles, which
+              # the job resolves with GetInferenceProfile.
+              - Sid: InvokeModelsUnderTest
+                Effect: Allow
+                Action:
+                  - 'bedrock:InvokeModel'
+                  - 'bedrock:InvokeModelWithResponseStream'
+                  - 'bedrock:CreateModelInvocationJob'
+                  - 'bedrock:StopModelInvocationJob'
+                  - 'bedrock:GetInferenceProfile'
+                  - 'bedrock:ListInferenceProfiles'
+                  - 'bedrock:GetProvisionedModelThroughput'
+                  - 'bedrock:GetImportedModel'
+                  - 'bedrock:GetPromptRouter'
+                Resource: '*'
+              # Needed to create the per-account Marketplace subscription that
+              # third-party models require on first invocation.
+              - Sid: ActivateMarketplaceModels
+                Effect: Allow
+                Action:
+                  - 'aws-marketplace:ViewSubscriptions'
+                  - 'aws-marketplace:Subscribe'
+                Resource: '*'
+
+  # ---------------------------------------------------------------------------
+  # Knowledge Base on S3 Vectors, which has no idle cost.
+  # ---------------------------------------------------------------------------
+
+  VectorBucket:
+    Type: AWS::S3Vectors::VectorBucket
+    Properties:
+      VectorBucketName: !Sub
+        - 'benchmark-to-build-vectors-${AWS::AccountId}-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+
+  VectorIndex:
+    Type: AWS::S3Vectors::Index
+    Properties:
+      # Ref on a vector bucket returns its ARN, not its name, so pass the ARN.
+      VectorBucketArn: !GetAtt VectorBucket.VectorBucketArn
+      IndexName: !Sub '${DatasetDomain}-legislation-index'
+      DataType: float32
+      # Must match Titan Text Embeddings V2, which outputs 1024 dimensions.
+      Dimension: 1024
+      DistanceMetric: cosine
+      MetadataConfiguration:
+        # Must be non-filterable, or ingestion fails on the 2048-byte cap for
+        # filterable metadata.
+        NonFilterableMetadataKeys:
+          - AMAZON_BEDROCK_TEXT
+          - AMAZON_BEDROCK_METADATA
+
+  KnowledgeBaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - 'BenchmarkToBuild-KnowledgeBase-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      Policies:
+        - PolicyName: KnowledgeBaseAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: InvokeEmbeddingModel
+                Effect: Allow
+                Action: 'bedrock:InvokeModel'
+                Resource: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0'
+              - Sid: ReadCorpus
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt DatasetBucket.Arn
+                  - !Sub '${DatasetBucket.Arn}/*'
+              # S3 Vectors has its own IAM namespace. s3:* does not cover it.
+              - Sid: WriteVectors
+                Effect: Allow
+                Action:
+                  - 's3vectors:GetIndex'
+                  - 's3vectors:PutVectors'
+                  - 's3vectors:GetVectors'
+                  - 's3vectors:ListVectors'
+                  - 's3vectors:DeleteVectors'
+                  - 's3vectors:QueryVectors'
+                Resource:
+                  - !GetAtt VectorBucket.VectorBucketArn
+                  - !GetAtt VectorIndex.IndexArn
+
+  KnowledgeBase:
+    Type: AWS::Bedrock::KnowledgeBase
+    Properties:
+      Name: !Sub
+        - 'benchmark-to-build-${DatasetDomain}-corpus-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      Description: Australian legislation corpus for Module 5 retrieval
+      RoleArn: !GetAtt KnowledgeBaseRole.Arn
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/amazon.titan-embed-text-v2:0'
+          EmbeddingModelConfiguration:
+            BedrockEmbeddingModelConfiguration:
+              Dimensions: 1024
+      StorageConfiguration:
+        Type: S3_VECTORS
+        S3VectorsConfiguration:
+          IndexArn: !GetAtt VectorIndex.IndexArn
+
+  CorpusDataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      Name: !Sub '${DatasetDomain}-legislation-corpus'
+      KnowledgeBaseId: !Ref KnowledgeBase
+      # RETAIN: DELETE can leave the data source DELETE_UNSUCCESSFUL, which
+      # blocks stack deletion. The vector index is deleted with the stack.
+      DataDeletionPolicy: RETAIN
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn: !GetAtt DatasetBucket.Arn
+          InclusionPrefixes:
+            - !Sub '${DatasetDomain}/corpus/'
+      VectorIngestionConfiguration:
+        ChunkingConfiguration:
+          # 1000 tokens keeps a section with its subsections; the 300-token
+          # default splits them and costs accuracy.
+          ChunkingStrategy: FIXED_SIZE
+          FixedSizeChunkingConfiguration:
+            MaxTokens: 1000
+            OverlapPercentage: 20
+
+  # ---------------------------------------------------------------------------
+  # Notebook permissions: one managed policy, attached to the project
+  # execution role after the project is created.
+  # ---------------------------------------------------------------------------
+
+  NotebookPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub
+        - 'BenchmarkToBuild-Notebooks-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      Description: Only the actions the Benchmark-to-Build notebooks call
+      # Keep the model list in step with Module 2's CANDIDATE_MODELS and judge,
+      # Module 5's MODEL_ID and Module 6's agent model.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Notebooks find this stack by its outputs, and DescribeStacks
+          # without a stack name is authorised as ListStacks, so neither can
+          # be scoped to one stack.
+          - Sid: ReadStackOutputs
+            Effect: Allow
+            Action:
+              - 'cloudformation:DescribeStacks'
+              - 'cloudformation:ListStacks'
+            Resource: '*'
+
+          # Cross-region inference profiles need both the profile and the
+          # model in every region the profile can route to.
+          - Sid: InvokeNotebookModels
+            Effect: Allow
+            Action:
+              # Converse is authorised as InvokeModel, and ConverseStream as
+              # InvokeModelWithResponseStream; there are no Converse actions.
+              - 'bedrock:InvokeModel'
+              - 'bedrock:InvokeModelWithResponseStream'
+            Resource:
+              - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.amazon.nova-lite-v1:0'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.amazon.nova-micro-v1:0'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.amazon.nova-pro-v1:0'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-6'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.meta.llama3-3-70b-instruct-v1:0'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.meta.llama4-maverick-17b-instruct-v1:0'
+              - 'arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0'
+              - 'arn:aws:bedrock:*::foundation-model/amazon.nova-micro-v1:0'
+              - 'arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0'
+              - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0'
+              - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0'
+              - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6'
+              - 'arn:aws:bedrock:*::foundation-model/meta.llama3-3-70b-instruct-v1:0'
+              - 'arn:aws:bedrock:*::foundation-model/meta.llama4-maverick-17b-instruct-v1:0'
+              - 'arn:aws:bedrock:*::foundation-model/mistral.ministral-3-14b-instruct'
+              - 'arn:aws:bedrock:*::foundation-model/mistral.mistral-large-3-675b-instruct'
+              - 'arn:aws:bedrock:*::foundation-model/nvidia.nemotron-nano-12b-v2'
+              - 'arn:aws:bedrock:*::foundation-model/nvidia.nemotron-nano-3-30b'
+              - 'arn:aws:bedrock:*::foundation-model/nvidia.nemotron-super-3-120b'
+              - 'arn:aws:bedrock:*::foundation-model/openai.gpt-oss-120b-1:0'
+              - 'arn:aws:bedrock:*::foundation-model/openai.gpt-oss-20b-1:0'
+              - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/cohere.rerank-v3-5:0'
+
+          - Sid: BedrockEvaluationJobs
+            Effect: Allow
+            Action:
+              - 'bedrock:CreateEvaluationJob'
+              - 'bedrock:GetEvaluationJob'
+            Resource: '*'
+
+          - Sid: PassEvaluationRoleToBedrock
+            Effect: Allow
+            Action: 'iam:PassRole'
+            Resource: !GetAtt BedrockEvaluationRole.Arn
+            Condition:
+              StringEquals:
+                'iam:PassedToService': bedrock.amazonaws.com
+
+          - Sid: KnowledgeBaseIngestAndRetrieve
+            Effect: Allow
+            Action:
+              - 'bedrock:StartIngestionJob'
+              - 'bedrock:GetIngestionJob'
+              - 'bedrock:ListIngestionJobs'
+              - 'bedrock:Retrieve'
+            Resource: !GetAtt KnowledgeBase.KnowledgeBaseArn
+
+          # Rerank has no resource-level permissions; the model it calls is
+          # scoped in InvokeNotebookModels.
+          - Sid: Rerank
+            Effect: Allow
+            Action: 'bedrock:Rerank'
+            Resource: '*'
+
+          - Sid: ReadWriteDatasetBucket
+            Effect: Allow
+            Action:
+              - 's3:GetObject'
+              - 's3:PutObject'
+              - 's3:ListBucket'
+            Resource:
+              - !GetAtt DatasetBucket.Arn
+              - !Sub '${DatasetBucket.Arn}/*'
+
+          - Sid: ReadWriteResultsBucket
+            Effect: Allow
+            Action:
+              - 's3:GetObject'
+              - 's3:PutObject'
+              - 's3:ListBucket'
+            Resource:
+              - !GetAtt ResultsBucket.Arn
+              - !Sub '${ResultsBucket.Arn}/*'
+
+  DomainExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - 'BenchmarkToBuild-DomainExecution-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: datazone.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+              - 'sts:TagSession'
+              - 'sts:SetContext'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+              'ForAllValues:StringLike':
+                'aws:TagKeys': 'datazone*'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/SageMakerStudioDomainExecutionRolePolicy'
+
+  DomainServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - 'BenchmarkToBuild-DomainService-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: datazone.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/SageMakerStudioDomainServiceRolePolicy'
+
+  Domain:
+    Type: AWS::DataZone::Domain
+    DependsOn: IDCUsers
+    Properties:
+      # Domain deletion is asynchronous, so a fixed name would make a retry
+      # fail with "Domain name already exists".
+      Name: !Sub
+        - '${DomainName}-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      Description: Benchmark-to-Build domain
+      DomainExecutionRole: !GetAtt DomainExecutionRole.Arn
+      DomainVersion: V2
+      ServiceRole: !GetAtt DomainServiceRole.Arn
+      SingleSignOn:
+        Type: IAM_IDC
+        UserAssignment: AUTOMATIC
+
+  ProvisioningRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - 'BenchmarkToBuild-Provisioning-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: datazone.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/SageMakerStudioProjectProvisioningRolePolicy'
+      # The managed policy has no bedrock:CreateInferenceProfile, which the
+      # Tooling environment needs once enableAmazonBedrockPermissions is on.
+      Policies:
+        - PolicyName: BedrockModelManagement
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ManageApplicationInferenceProfile
+                Effect: Allow
+                Action:
+                  - 'bedrock:CreateInferenceProfile'
+                  - 'bedrock:TagResource'
+                Resource: 'arn:aws:bedrock:*:*:application-inference-profile/*'
+                Condition:
+                  StringEquals:
+                    'aws:ResourceAccount': '${aws:PrincipalAccount}'
+                  'ForAnyValue:StringEquals':
+                    'aws:TagKeys':
+                      - AmazonDataZoneProject
+                  'Null':
+                    'aws:ResourceTag/AmazonDataZoneProject': 'false'
+                    'aws:RequestTag/AmazonDataZoneProject': 'false'
+              - Sid: DeleteApplicationInferenceProfile
+                Effect: Allow
+                Action: 'bedrock:DeleteInferenceProfile'
+                Resource: 'arn:aws:bedrock:*:*:application-inference-profile/*'
+                Condition:
+                  StringEquals:
+                    'aws:ResourceAccount': '${aws:PrincipalAccount}'
+                  'Null':
+                    'aws:ResourceTag/AmazonDataZoneProject': 'false'
+              - Sid: CreateApplicationInferenceProfileFromModels
+                Effect: Allow
+                Action: 'bedrock:CreateInferenceProfile'
+                Resource:
+                  - 'arn:aws:bedrock:*::foundation-model/*'
+                  - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*'
+
+  ManageAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub
+        - 'BenchmarkToBuild-ManageAccess-${Suffix}'
+        - Suffix: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId]]]]
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: datazone.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+              ArnEquals:
+                'aws:SourceArn': !Sub 'arn:aws:datazone:${AWS::Region}:${AWS::AccountId}:domain/${Domain.Id}'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonDataZoneSageMakerManageAccessRolePolicy'
+        - 'arn:aws:iam::aws:policy/service-role/AmazonDataZoneGlueManageAccessRolePolicy'
+
+  ToolingBlueprintConfiguration:
+    Type: AWS::DataZone::EnvironmentBlueprintConfiguration
+    Properties:
+      DomainIdentifier: !GetAtt Domain.Id
+      EnvironmentBlueprintIdentifier: Tooling
+      EnabledRegions:
+        - !Ref AWS::Region
+      ProvisioningRoleArn: !GetAtt ProvisioningRole.Arn
+      ManageAccessRoleArn: !GetAtt ManageAccessRole.Arn
+      RegionalParameters:
+        - Region: !Ref AWS::Region
+          Parameters:
+            VpcId: !Ref VPC
+            Subnets: !Join [',', [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+            S3Location: !Sub 's3://${ProjectBucket}'
+
+  ToolingBlueprintPolicyGrant:
+    Type: AWS::DataZone::PolicyGrant
+    Properties:
+      DomainIdentifier: !GetAtt Domain.Id
+      EntityType: ENVIRONMENT_BLUEPRINT_CONFIGURATION
+      EntityIdentifier: !Sub '${AWS::AccountId}:${ToolingBlueprintConfiguration.EnvironmentBlueprintId}'
+      PolicyType: CREATE_ENVIRONMENT_FROM_BLUEPRINT
+      Detail:
+        CreateEnvironmentFromBlueprint: {}
+      Principal:
+        Project:
+          ProjectDesignation: CONTRIBUTOR
+          ProjectGrantFilter:
+            DomainUnitFilter:
+              DomainUnit: !GetAtt Domain.RootDomainUnitId
+              IncludeChildDomainUnits: true
+
+  NotebookProjectProfile:
+    Type: AWS::DataZone::ProjectProfile
+    Properties:
+      Name: Benchmark-to-Build
+      Description: Benchmark and adapt foundation models against jurisdiction-specific data
+      Status: ENABLED
+      DomainIdentifier: !GetAtt Domain.Id
+      DomainUnitIdentifier: !GetAtt Domain.RootDomainUnitId
+      EnvironmentConfigurations:
+        - Name: Tooling
+          EnvironmentBlueprintId: !GetAtt ToolingBlueprintConfiguration.EnvironmentBlueprintId
+          Description: JupyterLab spaces and compute
+          DeploymentOrder: 0
+          DeploymentMode: ON_CREATE
+          AwsAccount:
+            AwsAccountId: !Ref AWS::AccountId
+          AwsRegion:
+            RegionName: !Ref AWS::Region
+          ConfigurationParameters:
+            ParameterOverrides:
+              - Name: enableSpaces
+                Value: 'true'
+                IsEditable: false
+              - Name: maxEbsVolumeSize
+                IsEditable: false
+              - Name: idleTimeoutInMinutes
+                IsEditable: false
+              - Name: lifecycleManagement
+                IsEditable: false
+              - Name: enableNetworkIsolation
+                IsEditable: false
+              # Off: on would let the project role invoke every Bedrock model.
+              - Name: enableAmazonBedrockPermissions
+                Value: 'false'
+                IsEditable: false
+              - Name: gitConnectionArn
+
+  NotebookProjectProfileGrant:
+    Type: AWS::DataZone::PolicyGrant
+    Properties:
+      DomainIdentifier: !GetAtt Domain.Id
+      EntityType: DOMAIN_UNIT
+      EntityIdentifier: !GetAtt Domain.RootDomainUnitId
+      PolicyType: CREATE_PROJECT_FROM_PROJECT_PROFILE
+      Detail:
+        CreateProjectFromProjectProfile:
+          IncludeChildDomainUnits: true
+          ProjectProfiles:
+            - !GetAtt NotebookProjectProfile.Id
+      Principal:
+        User:
+          AllUsersGrantFilter: {}
+
+  DomainOwner:
+    Type: AWS::DataZone::Owner
+    Properties:
+      DomainIdentifier: !GetAtt Domain.Id
+      EntityIdentifier: !GetAtt Domain.RootDomainUnitId
+      EntityType: DOMAIN_UNIT
+      Owner:
+        Group:
+          GroupIdentifier: !GetAtt IDCUsers.GroupId
+
+  Project:
+    Type: AWS::DataZone::Project
+    DependsOn:
+      - NotebookProjectProfileGrant
+      - ToolingBlueprintPolicyGrant
+      # Deleted before BucketCleanup, so the buckets are emptied only once
+      # the project can no longer write to them.
+      - BucketCleanup
+    Properties:
+      Name: !Ref ProjectName
+      Description: Benchmark-to-Build project
+      DomainIdentifier: !GetAtt Domain.Id
+      ProjectProfileId: !GetAtt NotebookProjectProfile.Id
+
+  ProjectMembership:
+    Type: AWS::DataZone::ProjectMembership
+    Properties:
+      Designation: PROJECT_OWNER
+      DomainIdentifier: !GetAtt Domain.Id
+      ProjectIdentifier: !GetAtt Project.Id
+      Member:
+        GroupIdentifier: !GetAtt IDCUsers.GroupId
+
+  # ---------------------------------------------------------------------------
+  # Post-provisioning: stage datasets, attach the notebook policy.
+  # ---------------------------------------------------------------------------
+
+  SetupLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: StageAndAttach
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'iam:ListRoles'
+                Resource: '*'
+              # One call to each creates the account's Marketplace subscription.
+              - Effect: Allow
+                Action: 'bedrock:InvokeModel'
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-6'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-sonnet-4-5-20250929-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0'
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6'
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0'
+                  - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/nvidia.nemotron-super-3-120b'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/nvidia.nemotron-nano-3-30b'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/nvidia.nemotron-nano-12b-v2'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/cohere.rerank-v3-5:0'
+              # No resource-level permissions.
+              - Effect: Allow
+                Action:
+                  - 'aws-marketplace:ViewSubscriptions'
+                  - 'aws-marketplace:Subscribe'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:DetachRolePolicy'
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/*datazone_usr_role*'
+                Condition:
+                  ArnEquals:
+                    'iam:PolicyARN': !Ref NotebookPolicy
+              - !If
+                - StageAssets
+                - Effect: Allow
+                  Action: 's3:GetObject'
+                  Resource: !Sub 'arn:aws:s3:::${AssetsBucketName}/*'
+                - !Ref AWS::NoValue
+              - Effect: Allow
+                Action: 's3:PutObject'
+                Resource: !Sub '${DatasetBucket.Arn}/*'
+              - Effect: Allow
+                Action:
+                  - 's3:ListBucket'
+                  - 's3:DeleteObject'
+                Resource:
+                  - !GetAtt ProjectBucket.Arn
+                  - !Sub '${ProjectBucket.Arn}/*'
+                  - !GetAtt DatasetBucket.Arn
+                  - !Sub '${DatasetBucket.Arn}/*'
+                  - !GetAtt ResultsBucket.Arn
+                  - !Sub '${ResultsBucket.Arn}/*'
+
+  SetupLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 7
+
+  SetupLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      LoggingConfig:
+        LogGroup: !Ref SetupLambdaLogGroup
+      Handler: index.handler
+      Runtime: python3.12
+      # Most of it is the wait for the project role.
+      Timeout: 900
+      MemorySize: 512
+      Description: Stage datasets, attach notebook policy
+      Role: !GetAtt SetupLambdaRole.Arn
+      Environment:
+        Variables:
+          ASSETS_BUCKET: !Ref AssetsBucketName
+          ASSETS_PREFIX: !Ref AssetsBucketPrefix
+          PROJECT_BUCKET: !Ref ProjectBucket
+          DATASET_BUCKET: !Ref DatasetBucket
+          RESULTS_BUCKET: !Ref ResultsBucket
+          NOTEBOOK_POLICY_ARN: !Ref NotebookPolicy
+          DATASET_DOMAIN: !Ref DatasetDomain
+      Code:
+        ZipFile: |
+          import io
+          import json
+          import os
+          import time
+          import zipfile
+
+          import boto3
+          import cfnresponse
+
+          S3 = boto3.client('s3')
+          IAM = boto3.client('iam')
+
+          SRC_BUCKET = os.environ.get('ASSETS_BUCKET', '')
+          SRC_PREFIX = os.environ.get('ASSETS_PREFIX', '')
+          PROJECT_BUCKET = os.environ['PROJECT_BUCKET']
+          DATASET_BUCKET = os.environ['DATASET_BUCKET']
+          RESULTS_BUCKET = os.environ['RESULTS_BUCKET']
+          POLICY_ARN = os.environ['NOTEBOOK_POLICY_ARN']
+          DOMAIN = os.environ['DATASET_DOMAIN']
+
+          def stage_datasets():
+              obj = S3.get_object(Bucket=SRC_BUCKET,
+                                  Key=SRC_PREFIX + 'benchmark-to-build.zip')
+              archive = zipfile.ZipFile(io.BytesIO(obj['Body'].read()))
+              prefix = f'benchmark-to-build/datasets/{DOMAIN}/'
+              for member in archive.namelist():
+                  if not member.startswith(prefix) or member.endswith('/'):
+                      continue
+                  tail = member[len(prefix):]
+                  if tail.startswith('processed/'):
+                      key = f'{DOMAIN}/{tail.split("/")[-1]}'
+                  elif tail.startswith('corpus/text/'):
+                      key = f'{DOMAIN}/corpus/{tail.split("/")[-1]}'
+                  elif tail == 'corpus/manifest.json':
+                      key = f'{DOMAIN}/corpus/manifest.json'
+                  else:
+                      continue
+                  S3.put_object(Bucket=DATASET_BUCKET, Key=key,
+                                Body=archive.read(member))
+                  print(f'uploaded {key}')
+
+          ROLE_SUBSTRING = 'datazone_usr_role'
+
+          def find_roles(project_id):
+              # SMUS names roles datazone_usr_role_<projectId>_<envId>; match
+              # this project only, across every page.
+              return [r['RoleName']
+                      for page in IAM.get_paginator('list_roles').paginate()
+                      for r in page['Roles']
+                      if ROLE_SUBSTRING in r['RoleName'] and project_id in r['RoleName']]
+
+          # Calling each third-party model once creates its per-account
+          # Marketplace subscription. Keep in step with Module 2's
+          # CANDIDATE_MODELS and judge, and Module 5's reranker. Failures are
+          # only logged: the notebook role can also subscribe on first use.
+          MARKETPLACE_MODELS = [
+              'us.anthropic.claude-sonnet-4-6',
+              'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+              'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+              'nvidia.nemotron-super-3-120b',
+              'nvidia.nemotron-nano-3-30b',
+              'nvidia.nemotron-nano-12b-v2',
+          ]
+          RERANK_MODEL = 'cohere.rerank-v3-5:0'
+
+          def activate_marketplace_models():
+              runtime = boto3.client('bedrock-runtime')
+              for model in MARKETPLACE_MODELS:
+                  try:
+                      runtime.converse(
+                          modelId=model,
+                          messages=[{'role': 'user', 'content': [{'text': 'Reply OK'}]}],
+                          inferenceConfig={'maxTokens': 5},
+                      )
+                      print(f'activated {model}')
+                  except Exception as e:
+                      print(f'could not activate {model} yet: {e}')
+              try:
+                  runtime.invoke_model(
+                      modelId=RERANK_MODEL,
+                      body=json.dumps({'query': 'test', 'documents': ['test'],
+                                       'api_version': 2}),
+                  )
+                  print(f'activated {RERANK_MODEL}')
+              except Exception as e:
+                  print(f'could not activate {RERANK_MODEL} yet: {e}')
+
+          def attach_policy(context, project_id):
+              # The Project reports CREATE_COMPLETE before its project role
+              # exists, so poll for it. The deadline is the function's remaining
+              # time less 60s, so there is always time to report back.
+              margin_ms = 60_000
+              roles = find_roles(project_id)
+              while not roles and context.get_remaining_time_in_millis() > margin_ms:
+                  time.sleep(10)
+                  roles = find_roles(project_id)
+
+              if not roles:
+                  raise RuntimeError(
+                      f'No IAM role matching "{ROLE_SUBSTRING}" before the '
+                      f'timeout: the Tooling environment did not finish '
+                      f'provisioning in time'
+                  )
+
+              failures = []
+              for name in roles:
+                  try:
+                      IAM.attach_role_policy(RoleName=name, PolicyArn=POLICY_ARN)
+                      print(f'attached notebook policy to {name}')
+                  except Exception as e:
+                      print(f'failed to attach to {name}: {e}')
+                      failures.append(f'{name}: {e}')
+
+              if failures:
+                  raise RuntimeError('Could not attach: ' + '; '.join(failures))
+              return roles
+
+          def empty_buckets():
+              # CloudFormation cannot delete a non-empty bucket. Raises if
+              # anything is left, so the failure names the bucket.
+              for bucket in (PROJECT_BUCKET, DATASET_BUCKET, RESULTS_BUCKET):
+                  for _ in range(5):
+                      left = 0
+                      for page in S3.get_paginator('list_objects_v2').paginate(Bucket=bucket):
+                          keys = [{'Key': o['Key']} for o in page.get('Contents', [])]
+                          if keys:
+                              resp = S3.delete_objects(Bucket=bucket, Delete={'Objects': keys, 'Quiet': True})
+                              left += len(resp.get('Errors', []))
+                      if not left and not S3.list_objects_v2(Bucket=bucket, MaxKeys=1).get('KeyCount'):
+                          break
+                      time.sleep(5)
+                  else:
+                      raise RuntimeError(f'{bucket} still holds objects after 5 attempts')
+                  print(f'emptied {bucket}')
+
+          def handler(event, context):
+              props = event.get('ResourceProperties', {})
+              # Stable across updates, so an update cannot trigger a Delete of
+              # a "replaced" resource.
+              physical_id = event.get('PhysicalResourceId') or props.get('Purpose', 'notebook-setup')
+
+              # BucketCleanup acts only on delete, after the Project is gone
+              # and just before the buckets.
+              if props.get('Purpose') == 'bucket-cleanup':
+                  try:
+                      if event['RequestType'] == 'Delete':
+                          empty_buckets()
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, physical_id)
+                  except Exception as e:
+                      print(f'FAILED: {e}')
+                      cfnresponse.send(event, context, cfnresponse.FAILED, {},
+                                       physical_id, reason=str(e)[:1000])
+                  return
+
+              try:
+                  if event['RequestType'] == 'Delete':
+                      # Detach before the Project is deleted: IAM won't delete
+                      # a role or policy still attached. Never block teardown.
+                      try:
+                          for name in find_roles(props.get('ProjectId', '')):
+                              try:
+                                  IAM.detach_role_policy(RoleName=name, PolicyArn=POLICY_ARN)
+                                  print(f'detached notebook policy from {name}')
+                              except IAM.exceptions.NoSuchEntityException:
+                                  pass
+                              except Exception as e:
+                                  print(f'could not detach from {name}: {e}')
+                      except Exception as e:
+                          print(f'could not list roles: {e}')
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, physical_id)
+                      return
+                  if event['RequestType'] != 'Create':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, physical_id)
+                      return
+
+                  if SRC_BUCKET:
+                      stage_datasets()
+                  else:
+                      print('no assets bucket: datasets are uploaded by hand')
+
+                  activate_marketplace_models()
+                  roles = attach_policy(context, props['ProjectId'])
+
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'RolesUpdated': ','.join(roles),
+                  }, physical_id)
+              except Exception as e:
+                  # Fail loudly: SUCCESS with no policy attached would only
+                  # surface later as "Bedrock is unreachable" in JupyterLab.
+                  print(f'FAILED: {e}')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {},
+                                   physical_id, reason=str(e)[:1000])
+
+  # Empties the buckets on delete or rollback. The Project depends on it, so it
+  # is deleted after the Project and before the buckets it references.
+  BucketCleanup:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt SetupLambda.Arn
+      ServiceTimeout: 600
+      Purpose: bucket-cleanup
+      Buckets:
+        - !Ref ProjectBucket
+        - !Ref DatasetBucket
+        - !Ref ResultsBucket
+
+  NotebookSetup:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn:
+      - ProjectMembership
+      - CorpusDataSource
+    Properties:
+      ServiceToken: !GetAtt SetupLambda.Arn
+      ServiceTimeout: 960
+      ProjectId: !GetAtt Project.Id
+
+Outputs:
+  SignInUser:
+    Description: >
+      Username for SageMaker Unified Studio. Generate its one-time password in
+      the IAM Identity Center console.
+    Value: !GetAtt IDCUsers.UserName
+
+  DomainPortalUrl:
+    Description: SageMaker Unified Studio portal
+    Value: !GetAtt Domain.PortalUrl
+
+  ProjectNameOutput:
+    Description: SageMaker Unified Studio project to open
+    Value: !Ref ProjectName
+
+  DatasetBucketName:
+    Description: Dataset bucket. The notebooks resolve this from stack outputs.
+    Value: !Ref DatasetBucket
+
+  ResultsBucketName:
+    Description: Results bucket. The notebooks resolve this from stack outputs.
+    Value: !Ref ResultsBucket
+
+  EvaluationRoleArn:
+    Description: Role Bedrock Evaluations assumes for Module 2 Part 1
+    Value: !GetAtt BedrockEvaluationRole.Arn
+
+  KnowledgeBaseId:
+    Description: Knowledge Base ID for Module 5 retrieval
+    Value: !Ref KnowledgeBase
+
+  DataSourceId:
+    Description: Data source ID for Module 5 ingestion
+    Value: !GetAtt CorpusDataSource.DataSourceId

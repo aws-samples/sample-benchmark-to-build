@@ -1,0 +1,17 @@
+*.js
+!jest.config.js
+*.d.ts
+node_modules
+__pycache__/
+*.pyc
+cdk.out
+.cdk.staging
+*.js.map
+build.log
+.DS_Store
+
+.venv/
+# Inspect AI eval logs and run summaries (regenerated per run; not tracked)
+inspect-logs*/
+
+.pytest_cache/
